@@ -1,0 +1,106 @@
+ # Set variables for your server and database
+$subscriptionId = 'fcfaa90d-897d-4fee-abb9-334d5c8940e3'
+	#$randomIdentifier = $(Get-Random)
+$resourceGroupName = "CG-DillonGage-POC1"
+$location = "South Central US"
+	$adminLogin = "azureuser"
+	$password = "PWD27!"+(New-Guid).Guid
+$serverName = "dg-azsy-demo-sqlserver"
+$databaseName = "AdventureWorks2017"
+$failoverLocation = "West US"
+$failoverServerName = "dg-azsy-demo-failover"
+$failoverGroupName = "dg-azsy-demo-failovergroup"
+
+# Set subscription ID
+#Set-AzContext -SubscriptionId $subscriptionId
+
+
+# Create a server with a system wide unique server name
+<# Write-host "Creating primary logical server..."
+$server = New-AzSqlServer -ResourceGroupName $resourceGroupName `
+   -ServerName $serverName `
+   -Location $location `
+   -SqlAdministratorCredentials $(New-Object -TypeName System.Management.Automation.PSCredential `
+   -ArgumentList $adminLogin, $(ConvertTo-SecureString -String $password -AsPlainText -Force))
+$server #>
+
+# Create General Purpose Gen5 database with 2 vCore
+<# Write-host "Creating a gen5 2 vCore database..."
+$database = New-AzSqlDatabase  -ResourceGroupName $resourceGroupName `
+   -ServerName $serverName `
+   -DatabaseName $databaseName `
+   -Edition GeneralPurpose `
+   -VCore 2 `
+   -ComputeGeneration Gen5 `
+   -MinimumCapacity 2 `
+   -SampleName "AdventureWorksLT"
+$database #>
+
+# Create a secondary server in the failover region
+Write-host "Creating a secondary logical server in the failover region..."
+$failoverServer = New-AzSqlServer -ResourceGroupName $resourceGroupName `
+   -ServerName $failoverServerName `
+   -Location $failoverLocation `
+   -SqlAdministratorCredentials (Get-Credential)
+  #-SqlAdministratorCredentials $(New-Object -TypeName System.Management.Automation.PSCredential `
+   #-ArgumentList $adminlogin, $(ConvertTo-SecureString -String $password -AsPlainText -Force))
+   
+$failoverServer
+
+
+
+# Create a failover group between the servers
+$failovergroup = Write-host "Creating a failover group between the primary and secondary server..."
+New-AzSqlDatabaseFailoverGroup `
+   –ResourceGroupName $resourceGroupName `
+   -ServerName $serverName `
+   -PartnerServerName $failoverServerName  `
+   –FailoverGroupName $failoverGroupName `
+   –FailoverPolicy Automatic `
+   -GracePeriodWithDataLossHours 2
+$failovergroup
+
+# Add the database to the failover group
+Write-host "Adding the database to the failover group..." 
+Get-AzSqlDatabase `
+   -ResourceGroupName $resourceGroupName `
+   -ServerName $serverName `
+   -DatabaseName $databaseName | `
+Add-AzSqlDatabaseToFailoverGroup `
+   -ResourceGroupName $resourceGroupName `
+   -ServerName $serverName `
+   -FailoverGroupName $failoverGroupName
+#Write-host "Successfully added the database to the failover group..." 
+
+# Check role of secondary replica
+Write-host "Confirming the secondary replica is secondary...." 
+(Get-AzSqlDatabaseFailoverGroup `
+   -FailoverGroupName $failoverGroupName `
+   -ResourceGroupName $resourceGroupName `
+   -ServerName $failoverServerName).ReplicationRole
+
+# Failover to secondary server
+Write-host "Failing over failover group to the secondary..." 
+Switch-AzSqlDatabaseFailoverGroup `
+   -ResourceGroupName $resourceGroupName `
+   -ServerName $failoverServerName `
+   -FailoverGroupName $failoverGroupName
+Write-host "Failed failover group successfully to" $failoverServerName 
+
+
+
+# Revert failover to primary server
+Write-host "Failing over failover group to the primary...." 
+Switch-AzSqlDatabaseFailoverGroup `
+   -ResourceGroupName $resourceGroupName `
+   -ServerName $serverName `
+   -FailoverGroupName $failoverGroupName
+Write-host "Failed failover group successfully back to" $serverName
+
+
+# Show randomized variables
+Write-host "Resource group name is" $resourceGroupName 
+Write-host "Password is" $password  
+Write-host "Server name is" $serverName 
+Write-host "Failover Server name is" $failoverServerName 
+Write-host "Failover group name is" $failoverGroupName
